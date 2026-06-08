@@ -307,7 +307,7 @@ document.getElementById('inp-camera').addEventListener('change',function(){if(th
 document.getElementById('inp-album').addEventListener('change',function(){if(this.files[0])startCrop(this.files[0]);});
 
 // --- Crop ---
-let cropImg=null,cropX=0,cropY=0,cropScale=1,cropSize=0,cropCanvas=null,cropCtx=null;
+let cropImg=null,cropX=0,cropY=0,cropScale=1,cropSize=0;
 let drag=false,dragStartX=0,dragStartY=0,dragImgX=0,dragImgY=0;
 let pinchDist=0,pinchScale=1;
 
@@ -316,64 +316,82 @@ function startCrop(file){
   const img=new Image();
   img.onload=()=>{
     cropImg=img;
-    const stage=document.getElementById('crop-stage');
-    const sw=stage.clientWidth||window.innerWidth;
-    const sh=stage.clientHeight||(window.innerHeight-56);
-    cropSize=Math.min(sw,sh);
-    const c=document.getElementById('crop-canvas');
-    cropCanvas=c;cropCtx=c.getContext('2d');
-    c.width=cropSize;c.height=cropSize;
-    // fit image to fill square
-    const ratio=Math.max(cropSize/img.width,cropSize/img.height);
-    cropScale=ratio;
-    cropX=(cropSize-img.width*cropScale)/2;
-    cropY=(cropSize-img.height*cropScale)/2;
-    drawCrop();
-    document.getElementById('crop-modal').classList.add('open');
     URL.revokeObjectURL(url);
+    // モーダルを先に開いてからサイズ取得
+    document.getElementById('crop-modal').classList.add('open');
+    requestAnimationFrame(()=>{
+      const stage=document.getElementById('crop-stage');
+      const sw=stage.clientWidth||window.innerWidth;
+      const sh=stage.clientHeight||(window.innerHeight-56);
+      cropSize=Math.min(sw,sh);
+      const c=document.getElementById('crop-canvas');
+      c.width=cropSize;c.height=cropSize;
+      c.style.width=cropSize+'px';c.style.height=cropSize+'px';
+      // 画像がcanvasを埋めるよう初期スケール設定
+      cropScale=Math.max(cropSize/img.width,cropSize/img.height);
+      cropX=(cropSize-img.width*cropScale)/2;
+      cropY=(cropSize-img.height*cropScale)/2;
+      drawCrop();
+    });
   };
   img.src=url;
 }
 
 function drawCrop(){
-  if(!cropCtx)return;
-  cropCtx.clearRect(0,0,cropSize,cropSize);
-  cropCtx.drawImage(cropImg,cropX,cropY,cropImg.width*cropScale,cropImg.height*cropScale);
-  // darken outside (vignette hint)
-  cropCtx.strokeStyle='rgba(255,255,255,0.6)';
-  cropCtx.lineWidth=2;
-  cropCtx.strokeRect(1,1,cropSize-2,cropSize-2);
+  const c=document.getElementById('crop-canvas');
+  if(!c||!cropImg||cropSize===0)return;
+  const ctx=c.getContext('2d');
+  ctx.clearRect(0,0,cropSize,cropSize);
+  ctx.drawImage(cropImg,cropX,cropY,cropImg.width*cropScale,cropImg.height*cropScale);
+  // 枠線
+  ctx.strokeStyle='rgba(255,255,255,0.7)';
+  ctx.lineWidth=2;
+  ctx.strokeRect(1,1,cropSize-2,cropSize-2);
 }
 
-// drag
+function clampCrop(){
+  const iw=cropImg.width*cropScale,ih=cropImg.height*cropScale;
+  cropX=iw>=cropSize?Math.min(0,Math.max(cropSize-iw,cropX)):Math.max(0,Math.min(cropSize-iw,cropX));
+  cropY=ih>=cropSize?Math.min(0,Math.max(cropSize-ih,cropY)):Math.max(0,Math.min(cropSize-ih,cropY));
+}
+
+// ドラッグ・ピンチ操作
 const cs=document.getElementById('crop-stage');
 cs.addEventListener('mousedown',e=>{drag=true;dragStartX=e.clientX;dragStartY=e.clientY;dragImgX=cropX;dragImgY=cropY;});
 cs.addEventListener('mousemove',e=>{if(!drag)return;cropX=dragImgX+(e.clientX-dragStartX);cropY=dragImgY+(e.clientY-dragStartY);clampCrop();drawCrop();});
-cs.addEventListener('mouseup',()=>drag=false);
+window.addEventListener('mouseup',()=>drag=false);
 cs.addEventListener('touchstart',e=>{
   if(e.touches.length===1){drag=true;dragStartX=e.touches[0].clientX;dragStartY=e.touches[0].clientY;dragImgX=cropX;dragImgY=cropY;}
   else if(e.touches.length===2){drag=false;pinchDist=Math.hypot(e.touches[0].clientX-e.touches[1].clientX,e.touches[0].clientY-e.touches[1].clientY);pinchScale=cropScale;}
 },{passive:true});
 cs.addEventListener('touchmove',e=>{
   e.preventDefault();
-  if(e.touches.length===1&&drag){cropX=dragImgX+(e.touches[0].clientX-dragStartX);cropY=dragImgY+(e.touches[0].clientY-dragStartY);clampCrop();drawCrop();}
-  else if(e.touches.length===2){const d=Math.hypot(e.touches[0].clientX-e.touches[1].clientX,e.touches[0].clientY-e.touches[1].clientY);const s=pinchScale*(d/pinchDist);cropScale=Math.max(cropSize/Math.max(cropImg.width,cropImg.height)*0.5,Math.min(s,6));clampCrop();drawCrop();}
+  if(e.touches.length===1&&drag){
+    cropX=dragImgX+(e.touches[0].clientX-dragStartX);
+    cropY=dragImgY+(e.touches[0].clientY-dragStartY);
+    clampCrop();drawCrop();
+  } else if(e.touches.length===2){
+    const d=Math.hypot(e.touches[0].clientX-e.touches[1].clientX,e.touches[0].clientY-e.touches[1].clientY);
+    const minScale=cropSize/Math.max(cropImg.width,cropImg.height)*0.5;
+    cropScale=Math.max(minScale,Math.min(pinchScale*(d/pinchDist),6));
+    clampCrop();drawCrop();
+  }
 },{passive:false});
-cs.addEventListener('touchend',()=>{drag=false;});
+cs.addEventListener('touchend',e=>{if(e.touches.length===0)drag=false;});
 
-function clampCrop(){
-  const iw=cropImg.width*cropScale,ih=cropImg.height*cropScale;
-  if(iw>=cropSize){cropX=Math.min(0,Math.max(cropSize-iw,cropX));}else{cropX=Math.max(0,Math.min(cropSize-iw,cropX));}
-  if(ih>=cropSize){cropY=Math.min(0,Math.max(cropSize-ih,cropY));}else{cropY=Math.max(0,Math.min(cropSize-ih,cropY));}
-}
-
-document.getElementById('crop-cancel').onclick=()=>{document.getElementById('crop-modal').classList.remove('open');};
+document.getElementById('crop-cancel').onclick=()=>{
+  document.getElementById('crop-modal').classList.remove('open');
+};
 document.getElementById('crop-ok').onclick=()=>{
+  // 元画像から正しくクロップして600x600で出力
   const out=document.createElement('canvas');
   out.width=600;out.height=600;
   const ctx=out.getContext('2d');
-  const ratio=600/cropSize;
-  ctx.drawImage(cropCanvas,0,0,cropSize,cropSize,0,0,600,600);
+  const sx=-cropX/cropScale;
+  const sy=-cropY/cropScale;
+  const sw=cropSize/cropScale;
+  const sh=cropSize/cropScale;
+  ctx.drawImage(cropImg,sx,sy,sw,sh,0,0,600,600);
   photos[activeSlot]=out.toDataURL('image/jpeg',0.85);
   renderSlot(activeSlot);
   document.getElementById('crop-modal').classList.remove('open');
