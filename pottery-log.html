@@ -105,6 +105,28 @@ nav{display:flex;gap:3px;background:var(--surface);border:1px solid var(--border
 .empty{text-align:center;padding:3rem 1rem;color:var(--hint);font-size:14px}
 .empty-ico{font-size:48px;margin-bottom:12px;opacity:.5}
 @media(max-width:480px){.fgrid{grid-template-columns:1fr}.thumb-grid{grid-template-columns:repeat(2,1fr)}}
+
+/* Photo source chooser */
+.photo-chooser-bg{display:none;position:fixed;inset:0;background:rgba(0,0,0,.55);z-index:300;align-items:flex-end;justify-content:center}
+.photo-chooser-bg.open{display:flex}
+.photo-chooser{background:var(--surface);border-radius:var(--r) var(--r) 0 0;width:100%;max-width:480px;padding:1.25rem 1rem 2rem;display:flex;flex-direction:column;gap:10px}
+.photo-chooser h4{font-size:13px;color:var(--sub);text-align:center;margin-bottom:2px}
+.pc-btn{padding:14px;font-size:15px;font-family:'Noto Serif JP',serif;border:1px solid var(--border);border-radius:var(--rs);background:var(--surface);color:var(--text);cursor:pointer;text-align:center}
+.pc-btn:active{background:var(--accent-l)}
+.pc-cancel{padding:12px;font-size:14px;font-family:inherit;border:none;border-radius:var(--rs);background:var(--bg);color:var(--sub);cursor:pointer}
+
+/* Crop modal */
+.crop-bg{display:none;position:fixed;inset:0;background:#000;z-index:400;flex-direction:column}
+.crop-bg.open{display:flex}
+.crop-header{display:flex;align-items:center;justify-content:space-between;padding:12px 16px;background:#111;color:#fff}
+.crop-header span{font-size:15px;font-weight:600}
+.crop-header button{padding:7px 16px;border:none;border-radius:20px;font-size:13px;cursor:pointer}
+.crop-cancel-btn{background:rgba(255,255,255,.15);color:#fff}
+.crop-ok-btn{background:var(--accent);color:#fff}
+.crop-stage{flex:1;position:relative;overflow:hidden;display:flex;align-items:center;justify-content:center;touch-action:none}
+.crop-stage canvas{display:block;max-width:100%;max-height:100%}
+.crop-overlay{position:absolute;inset:0;pointer-events:none}
+.crop-hint{position:absolute;bottom:14px;left:50%;transform:translateX(-50%);color:rgba(255,255,255,.6);font-size:12px;white-space:nowrap}
 </style>
 </head>
 <body>
@@ -197,6 +219,31 @@ nav{display:flex;gap:3px;background:var(--surface);border:1px solid var(--border
 
 <div class="toast" id="toast"></div>
 
+<!-- Photo source chooser -->
+<div class="photo-chooser-bg" id="photo-chooser">
+  <div class="photo-chooser">
+    <h4>写真を追加</h4>
+    <button class="pc-btn" id="pc-camera">📷 カメラで撮影</button>
+    <button class="pc-btn" id="pc-album">🖼️ アルバムから選ぶ</button>
+    <button class="pc-cancel" id="pc-cancel">キャンセル</button>
+  </div>
+</div>
+<input type="file" id="inp-camera" accept="image/*" capture="environment" style="display:none">
+<input type="file" id="inp-album" accept="image/*" style="display:none">
+
+<!-- Crop modal -->
+<div class="crop-bg" id="crop-modal">
+  <div class="crop-header">
+    <button class="crop-cancel-btn" id="crop-cancel">キャンセル</button>
+    <span>切り取り</span>
+    <button class="crop-ok-btn" id="crop-ok">使う</button>
+  </div>
+  <div class="crop-stage" id="crop-stage">
+    <canvas id="crop-canvas"></canvas>
+    <div class="crop-hint">ドラッグで位置調整・ピンチで拡大縮小</div>
+  </div>
+</div>
+
 <script>
 const KEY='pottery3';
 let records=[],photos=['','',''],editId=null,viewId=null;
@@ -221,6 +268,8 @@ function setToday(){
   document.getElementById('f-date').value=`${d.getFullYear()}-${p(d.getMonth()+1)}-${p(d.getDate())}`;
 }
 
+let activeSlot=null;
+
 function buildSlots(){
   const wrap=document.getElementById('photo-slots');
   wrap.innerHTML='';
@@ -228,24 +277,107 @@ function buildSlots(){
     const div=document.createElement('div');
     div.className='photo-slot';div.id='slot'+i;
     div.innerHTML=`
-      <div class="slot-inner" onclick="document.getElementById('inp${i}').click()">
+      <div class="slot-inner" onclick="openChooser(${i})">
         <div class="slot-icon">${ICONS[i]}</div>
         <div class="slot-label">${LABELS[i]}</div>
       </div>
-      <input style="position:absolute;inset:0;opacity:0;cursor:pointer;z-index:2" id="inp${i}" type="file" accept="image/*" capture="environment">
       <button class="del-btn" id="del${i}" onclick="delPhoto(event,${i})">✕</button>`;
     wrap.appendChild(div);
-    document.getElementById('inp'+i).addEventListener('change',function(){onPhoto(i,this);});
   });
   [0,1,2].forEach(i=>renderSlot(i));
 }
 
-function onPhoto(i,input){
-  if(!input.files[0])return;
-  const reader=new FileReader();
-  reader.onload=e=>{photos[i]=e.target.result;renderSlot(i);};
-  reader.readAsDataURL(input.files[0]);
+// --- Photo chooser ---
+function openChooser(i){
+  activeSlot=i;
+  document.getElementById('photo-chooser').classList.add('open');
 }
+document.getElementById('pc-cancel').onclick=()=>document.getElementById('photo-chooser').classList.remove('open');
+document.getElementById('pc-camera').onclick=()=>{
+  document.getElementById('photo-chooser').classList.remove('open');
+  document.getElementById('inp-camera').value='';
+  document.getElementById('inp-camera').click();
+};
+document.getElementById('pc-album').onclick=()=>{
+  document.getElementById('photo-chooser').classList.remove('open');
+  document.getElementById('inp-album').value='';
+  document.getElementById('inp-album').click();
+};
+document.getElementById('inp-camera').addEventListener('change',function(){if(this.files[0])startCrop(this.files[0]);});
+document.getElementById('inp-album').addEventListener('change',function(){if(this.files[0])startCrop(this.files[0]);});
+
+// --- Crop ---
+let cropImg=null,cropX=0,cropY=0,cropScale=1,cropSize=0,cropCanvas=null,cropCtx=null;
+let drag=false,dragStartX=0,dragStartY=0,dragImgX=0,dragImgY=0;
+let pinchDist=0,pinchScale=1;
+
+function startCrop(file){
+  const url=URL.createObjectURL(file);
+  const img=new Image();
+  img.onload=()=>{
+    cropImg=img;
+    const stage=document.getElementById('crop-stage');
+    const sw=stage.clientWidth||window.innerWidth;
+    const sh=stage.clientHeight||(window.innerHeight-56);
+    cropSize=Math.min(sw,sh);
+    const c=document.getElementById('crop-canvas');
+    cropCanvas=c;cropCtx=c.getContext('2d');
+    c.width=cropSize;c.height=cropSize;
+    // fit image to fill square
+    const ratio=Math.max(cropSize/img.width,cropSize/img.height);
+    cropScale=ratio;
+    cropX=(cropSize-img.width*cropScale)/2;
+    cropY=(cropSize-img.height*cropScale)/2;
+    drawCrop();
+    document.getElementById('crop-modal').classList.add('open');
+    URL.revokeObjectURL(url);
+  };
+  img.src=url;
+}
+
+function drawCrop(){
+  if(!cropCtx)return;
+  cropCtx.clearRect(0,0,cropSize,cropSize);
+  cropCtx.drawImage(cropImg,cropX,cropY,cropImg.width*cropScale,cropImg.height*cropScale);
+  // darken outside (vignette hint)
+  cropCtx.strokeStyle='rgba(255,255,255,0.6)';
+  cropCtx.lineWidth=2;
+  cropCtx.strokeRect(1,1,cropSize-2,cropSize-2);
+}
+
+// drag
+const cs=document.getElementById('crop-stage');
+cs.addEventListener('mousedown',e=>{drag=true;dragStartX=e.clientX;dragStartY=e.clientY;dragImgX=cropX;dragImgY=cropY;});
+cs.addEventListener('mousemove',e=>{if(!drag)return;cropX=dragImgX+(e.clientX-dragStartX);cropY=dragImgY+(e.clientY-dragStartY);clampCrop();drawCrop();});
+cs.addEventListener('mouseup',()=>drag=false);
+cs.addEventListener('touchstart',e=>{
+  if(e.touches.length===1){drag=true;dragStartX=e.touches[0].clientX;dragStartY=e.touches[0].clientY;dragImgX=cropX;dragImgY=cropY;}
+  else if(e.touches.length===2){drag=false;pinchDist=Math.hypot(e.touches[0].clientX-e.touches[1].clientX,e.touches[0].clientY-e.touches[1].clientY);pinchScale=cropScale;}
+},{passive:true});
+cs.addEventListener('touchmove',e=>{
+  e.preventDefault();
+  if(e.touches.length===1&&drag){cropX=dragImgX+(e.touches[0].clientX-dragStartX);cropY=dragImgY+(e.touches[0].clientY-dragStartY);clampCrop();drawCrop();}
+  else if(e.touches.length===2){const d=Math.hypot(e.touches[0].clientX-e.touches[1].clientX,e.touches[0].clientY-e.touches[1].clientY);const s=pinchScale*(d/pinchDist);cropScale=Math.max(cropSize/Math.max(cropImg.width,cropImg.height)*0.5,Math.min(s,6));clampCrop();drawCrop();}
+},{passive:false});
+cs.addEventListener('touchend',()=>{drag=false;});
+
+function clampCrop(){
+  const iw=cropImg.width*cropScale,ih=cropImg.height*cropScale;
+  if(iw>=cropSize){cropX=Math.min(0,Math.max(cropSize-iw,cropX));}else{cropX=Math.max(0,Math.min(cropSize-iw,cropX));}
+  if(ih>=cropSize){cropY=Math.min(0,Math.max(cropSize-ih,cropY));}else{cropY=Math.max(0,Math.min(cropSize-ih,cropY));}
+}
+
+document.getElementById('crop-cancel').onclick=()=>{document.getElementById('crop-modal').classList.remove('open');};
+document.getElementById('crop-ok').onclick=()=>{
+  const out=document.createElement('canvas');
+  out.width=600;out.height=600;
+  const ctx=out.getContext('2d');
+  const ratio=600/cropSize;
+  ctx.drawImage(cropCanvas,0,0,cropSize,cropSize,0,0,600,600);
+  photos[activeSlot]=out.toDataURL('image/jpeg',0.85);
+  renderSlot(activeSlot);
+  document.getElementById('crop-modal').classList.remove('open');
+};
 
 function renderSlot(i){
   const slot=document.getElementById('slot'+i),del=document.getElementById('del'+i);
