@@ -102,6 +102,9 @@ nav{display:flex;gap:3px;background:var(--surface);border:1px solid var(--border
 
 .toast{position:fixed;bottom:20px;left:50%;transform:translateX(-50%) translateY(60px);background:#2C2416;color:#fff;padding:9px 18px;border-radius:20px;font-size:13px;opacity:0;transition:.25s;z-index:200;white-space:nowrap;pointer-events:none}
 .toast.show{opacity:1;transform:translateX(-50%) translateY(0)}
+.search-bar{margin-bottom:12px}
+.search-bar input{width:100%;padding:10px 14px;font-size:14px;font-family:inherit;border:1px solid var(--border);border-radius:var(--r);background:var(--surface);color:var(--text);outline:none;}
+.search-bar input:focus{border-color:var(--accent)}
 .empty{text-align:center;padding:3rem 1rem;color:var(--hint);font-size:14px}
 .empty-ico{font-size:48px;margin-bottom:12px;opacity:.5}
 @media(max-width:480px){.fgrid{grid-template-columns:1fr}.thumb-grid{grid-template-columns:repeat(2,1fr)}}
@@ -142,6 +145,9 @@ nav{display:flex;gap:3px;background:var(--surface);border:1px solid var(--border
 
   <!-- 一覧 -->
   <div class="sec active" id="tab-list">
+    <div class="search-bar">
+      <input type="search" id="search-input" placeholder="🔍 作品名・成形・粘土・釉薬・技法で検索…" oninput="renderList()">
+    </div>
     <div id="records-list"></div>
   </div>
 
@@ -180,9 +186,9 @@ nav{display:flex;gap:3px;background:var(--surface);border:1px solid var(--border
           <input type="text" id="f-glaze" placeholder="例：灰釉、青磁釉…">
         </div>
         <div class="frow">
-          <label>焼き方</label>
-          <select id="f-firing">
-            <option>電気窯</option><option>ガス窯</option><option>薪窯</option><option>楽焼き</option><option>野焼き</option><option>その他</option>
+          <label>技法・工程</label>
+          <select id="f-technique">
+            <option value="">—</option><option>しのぎ</option><option>象嵌</option><option>絵付け</option><option>その他</option>
           </select>
         </div>
       </div>
@@ -222,9 +228,12 @@ nav{display:flex;gap:3px;background:var(--surface);border:1px solid var(--border
 <!-- Photo source chooser -->
 <div class="photo-chooser-bg" id="photo-chooser">
   <div class="photo-chooser">
-    <h4>写真を追加</h4>
+    <h4>写真を選択</h4>
     <button class="pc-btn" id="pc-camera">📷 カメラで撮影</button>
     <button class="pc-btn" id="pc-album">🖼️ アルバムから選ぶ</button>
+    <div id="pc-change-row" style="display:none">
+      <button class="pc-btn" id="pc-delete-photo" style="color:#b83030;border-color:#f0cccc">🗑 この写真を削除</button>
+    </div>
     <button class="pc-cancel" id="pc-cancel">キャンセル</button>
   </div>
 </div>
@@ -290,9 +299,16 @@ function buildSlots(){
 // --- Photo chooser ---
 function openChooser(i){
   activeSlot=i;
+  // 写真があれば変更ボタンも表示
+  const hasPhoto=!!photos[i];
+  document.getElementById('pc-change-row').style.display=hasPhoto?'':'none';
   document.getElementById('photo-chooser').classList.add('open');
 }
 document.getElementById('pc-cancel').onclick=()=>document.getElementById('photo-chooser').classList.remove('open');
+document.getElementById('pc-delete-photo').onclick=()=>{
+  photos[activeSlot]='';renderSlot(activeSlot);
+  document.getElementById('photo-chooser').classList.remove('open');
+};
 document.getElementById('pc-camera').onclick=()=>{
   document.getElementById('photo-chooser').classList.remove('open');
   document.getElementById('inp-camera').value='';
@@ -410,8 +426,7 @@ function renderSlot(i){
 }
 
 function delPhoto(e,i){
-  e.stopPropagation();photos[i]='';
-  document.getElementById('inp'+i).value='';renderSlot(i);
+  e.stopPropagation();photos[i]='';renderSlot(i);
 }
 
 function showTab(t){
@@ -434,7 +449,7 @@ function saveRecord(){
     method:document.getElementById('f-method').value,
     clay:document.getElementById('f-clay').value,
     glaze:document.getElementById('f-glaze').value.trim(),
-    firing:document.getElementById('f-firing').value,
+    technique:document.getElementById('f-technique').value,
     note:document.getElementById('f-note').value.trim(),
     tags:document.getElementById('f-tags').value.split(',').map(t=>t.trim()).filter(Boolean),
     photos:[...photos]
@@ -461,9 +476,11 @@ function resetForm(){
 function cancelEdit(){editId=null;resetForm();showTab('list');}
 
 function renderList(){
-  const list=[...records].reverse();
+  const q=(document.getElementById('search-input')?.value||'').trim().toLowerCase();
+  let list=[...records].reverse();
+  if(q){list=list.filter(r=>[r.title,r.method,r.clay,r.glaze,r.technique,r.firing].join(' ').toLowerCase().includes(q));}
   const el=document.getElementById('records-list');
-  if(!list.length){el.innerHTML='<div class="empty"><div class="empty-ico">🪴</div>まだ記録がありません</div>';return;}
+  if(!list.length){el.className='';el.innerHTML='<div class="empty"><div class="empty-ico">🔍</div>'+(q?'該当する作品がありません':'まだ記録がありません')+'</div>';return;}
   el.className='thumb-grid';
   el.innerHTML=list.map(r=>{
     const ps=(r.photos||[]).filter(p=>p);
@@ -491,7 +508,7 @@ function openModal(id){
     :`<div class="modal-photos ${pc===1?'p1':pc===2?'p2':'p3'}">${ps.map(p=>`<div class="modal-ph"><img src="${p}"></div>`).join('')}</div>`;
   document.getElementById('modal-title').textContent=(r.no?fmtNo(r.no)+' ':'')+r.title;
   document.getElementById('modal-info').innerHTML=[
-    ['日付',r.date],['成形',r.method],['粘土',r.clay],['釉薬',r.glaze||'—'],['焼き方',r.firing]
+    ['日付',r.date],['成形',r.method],['粘土',r.clay],['釉薬',r.glaze||'—'],['技法・工程',r.technique||r.firing||'—']
   ].map(([k,v])=>`<div class="info-row"><strong>${k}</strong>　${esc(v)}</div>`).join('');
   const ne=document.getElementById('modal-note');
   ne.textContent=r.note||'';ne.style.display=r.note?'':'none';
@@ -519,7 +536,7 @@ function editRecord(){
   document.getElementById('f-method').value=r.method||'ろくろ';
   document.getElementById('f-clay').value=r.clay||'信楽土';
   document.getElementById('f-glaze').value=r.glaze||'';
-  document.getElementById('f-firing').value=r.firing||'電気窯';
+  document.getElementById('f-technique').value=r.technique||r.firing||'';
   document.getElementById('f-note').value=r.note||'';
   document.getElementById('f-tags').value=(r.tags||[]).join(', ');
   photos=[...(r.photos||['','',''])];buildSlots();
