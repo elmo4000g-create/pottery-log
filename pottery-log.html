@@ -286,12 +286,56 @@ function nextNo(){
   return Math.max(...records.map(r=>r.no||0))+1;
 }
 function fmtNo(n){return '#'+String(n).padStart(3,'0');}
-
 function esc(s){return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');}
 function toast(msg){const e=document.getElementById('toast');e.textContent=msg;e.classList.add('show');setTimeout(()=>e.classList.remove('show'),2500);}
 
-function load(){
-  try{records=JSON.parse(localStorage.getItem(KEY)||'[]');}catch(e){records=[];}
+// ── IndexedDB（写真専用） ──────────────────────────────
+let _db=null;
+function openDB(){
+  return new Promise((res,rej)=>{
+    const r=indexedDB.open('yakimono-photos',1);
+    r.onupgradeneeded=e=>{
+      if(!e.target.result.objectStoreNames.contains('photos'))
+        e.target.result.createObjectStore('photos');
+    };
+    r.onsuccess=e=>{_db=e.target.result;res();};
+    r.onerror=e=>rej(e.target.error);
+  });
+}
+function idbPut(key,val){return new Promise((res,rej)=>{const tx=_db.transaction('photos','readwrite');tx.objectStore('photos').put(val,key).onsuccess=()=>res();tx.onerror=e=>rej(e.target.error);});}
+function idbGet(key){return new Promise((res,rej)=>{const tx=_db.transaction('photos','readonly');const r=tx.objectStore('photos').get(key);r.onsuccess=()=>res(r.result||'');r.onerror=e=>rej(e.target.error);});}
+function idbDel(key){return new Promise((res,rej)=>{const tx=_db.transaction('photos','readwrite');tx.objectStore('photos').delete(key).onsuccess=()=>res();tx.onerror=e=>rej(e.target.error);});}
+async function savePhotos(id,arr){for(let i=0;i<3;i++){if(arr[i])await idbPut(`${id}-${i}`,arr[i]);else await idbDel(`${id}-${i}`);}}
+async function loadPhotos(id){return Promise.all([0,1,2].map(i=>idbGet(`${id}-${i}`)));}
+async function deletePhotos(id){await Promise.all([0,1,2].map(i=>idbDel(`${id}-${i}`)));}
+
+// メタデータのみlocalStorageへ（写真は含めない）
+function saveMeta(){
+  const stripped=records.map(({photos:_,...rest})=>rest);
+  localStorage.setItem(KEY,JSON.stringify(stripped));
+}
+
+// ── 起動処理 ──────────────────────────────────────────
+async function load(){
+  await openDB();
+  let raw=[];
+  try{raw=JSON.parse(localStorage.getItem(KEY)||'[]');}catch(e){raw=[];}
+
+  // 旧データ移行：localStorageに写真が残っていればIndexedDBへ移動
+  let migrated=false;
+  for(const r of raw){
+    if(r.photos&&r.photos.some(p=>p)){
+      await savePhotos(r.id,r.photos);
+      migrated=true;
+    }
+    delete r.photos;
+  }
+  if(migrated)saveMeta();
+
+  records=raw;
+  // 写真をIndexedDBから読み込んでメモリに展開
+  for(const r of records) r.photos=await loadPhotos(r.id);
+
   setToday();buildSlots();renderList();
 }
 
@@ -460,12 +504,17 @@ function showTab(t){
   if(t==='list')renderList();
 }
 
-function saveRecord(){
+async function saveRecord(){
   const title=document.getElementById('f-title').value.trim();
   if(!title){toast('⚠️ 作品名を入力してください');return;}
+
+  const btn=document.querySelector('.btn-save');
+  btn.disabled=true;btn.textContent='保存中…';
+
   const dv=document.getElementById('f-date').value;
+  const id=editId||Date.now();
   const rec={
-    id:editId||Date.now(),
+    id,
     no:editId?(records.find(r=>r.id===editId)||{}).no||nextNo():nextNo(),
     title,
     date:dv?dv.replace(/-/g,'/'):new Date().toLocaleDateString('ja-JP'),
@@ -478,24 +527,20 @@ function saveRecord(){
     tags:document.getElementById('f-tags').value.split(',').map(t=>t.trim()).filter(Boolean),
     photos:[...photos]
   };
-  const prevRecords=[...records];
+
+  // 写真をIndexedDBに保存
+  try{await savePhotos(id,rec.photos);}
+  catch(e){toast('⚠️ 写真の保存に失敗しました');btn.disabled=false;btn.textContent='記録を保存する';return;}
+
+  // メタデータをlocalStorageに保存
   if(editId){const idx=records.findIndex(r=>r.id===editId);if(idx>=0)records[idx]=rec;}
   else records.push(rec);
-
-  try{
-    localStorage.setItem(KEY,JSON.stringify(records));
-  }catch(e){
-    // 保存失敗 → メモリも元に戻す
-    records=prevRecords;
-    toast('⚠️ 写真が多すぎて保存できません。写真を減らしてお試しください。');
-    return;
-  }
+  try{saveMeta();}
+  catch(e){toast('⚠️ データの保存に失敗しました');btn.disabled=false;btn.textContent='記録を保存する';return;}
 
   const isNew=!editId;
   const savedNo=fmtNo(rec.no);
   editId=null;
-  const btn=document.querySelector('.btn-save');
-  btn.disabled=true;
   btn.textContent=`${savedNo} 保存しました ✓`;
   toast(isNew?`${savedNo} 記録しました`:`${savedNo} 更新しました`);
   setTimeout(()=>{btn.disabled=false;btn.textContent='記録を保存する';resetForm();showTab('list');},1500);
@@ -555,11 +600,12 @@ function bgClick(e){if(e.target===document.getElementById('modal'))closeModal();
 
 function startEdit(id){viewId=id;editRecord();}
 
-function confirmDelete(id){
+async function confirmDelete(id){
   viewId=id;
   if(!confirm('この記録を削除しますか？'))return;
   records=records.filter(r=>r.id!==viewId);
-  localStorage.setItem(KEY,JSON.stringify(records));
+  saveMeta();
+  await deletePhotos(viewId);
   renderList();toast('🗑 削除しました');
 }
 
@@ -580,10 +626,11 @@ function editRecord(){
   showTab('add');
 }
 
-function deleteRecord(){
+async function deleteRecord(){
   if(!confirm('この記録を削除しますか？'))return;
   records=records.filter(r=>r.id!==viewId);
-  localStorage.setItem(KEY,JSON.stringify(records));
+  saveMeta();
+  await deletePhotos(viewId);
   closeModal();renderList();toast('🗑 削除しました');
 }
 
