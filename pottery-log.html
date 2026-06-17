@@ -292,20 +292,51 @@ function toast(msg){const e=document.getElementById('toast');e.textContent=msg;e
 // ── IndexedDB（写真専用） ──────────────────────────────
 let _db=null;
 function openDB(){
-  return new Promise((res,rej)=>{
+  return new Promise((res)=>{
+    if(!window.indexedDB){res();return;}
     const r=indexedDB.open('yakimono-photos',1);
     r.onupgradeneeded=e=>{
       if(!e.target.result.objectStoreNames.contains('photos'))
         e.target.result.createObjectStore('photos');
     };
     r.onsuccess=e=>{_db=e.target.result;res();};
-    r.onerror=e=>rej(e.target.error);
+    r.onerror=()=>res(); // 失敗しても続行（localStorageフォールバック）
+    r.onblocked=()=>res();
   });
 }
-function idbPut(key,val){return new Promise((res,rej)=>{const tx=_db.transaction('photos','readwrite');tx.objectStore('photos').put(val,key).onsuccess=()=>res();tx.onerror=e=>rej(e.target.error);});}
-function idbGet(key){return new Promise((res,rej)=>{const tx=_db.transaction('photos','readonly');const r=tx.objectStore('photos').get(key);r.onsuccess=()=>res(r.result||'');r.onerror=e=>rej(e.target.error);});}
-function idbDel(key){return new Promise((res,rej)=>{const tx=_db.transaction('photos','readwrite');tx.objectStore('photos').delete(key).onsuccess=()=>res();tx.onerror=e=>rej(e.target.error);});}
-async function savePhotos(id,arr){for(let i=0;i<3;i++){if(arr[i])await idbPut(`${id}-${i}`,arr[i]);else await idbDel(`${id}-${i}`);}}
+function idbPut(key,val){
+  if(!_db)return Promise.resolve();
+  return new Promise((res,rej)=>{
+    const tx=_db.transaction('photos','readwrite');
+    const req=tx.objectStore('photos').put(val,key);
+    req.onsuccess=()=>res();
+    req.onerror=e=>rej(e.target.error);
+    tx.onerror=e=>rej(e.target.error);
+  });
+}
+function idbGet(key){
+  if(!_db)return Promise.resolve('');
+  return new Promise((res)=>{
+    const tx=_db.transaction('photos','readonly');
+    const req=tx.objectStore('photos').get(key);
+    req.onsuccess=()=>res(req.result||'');
+    req.onerror=()=>res('');
+  });
+}
+function idbDel(key){
+  if(!_db)return Promise.resolve();
+  return new Promise((res)=>{
+    const tx=_db.transaction('photos','readwrite');
+    tx.objectStore('photos').delete(key).onsuccess=()=>res();
+    tx.onerror=()=>res();
+  });
+}
+async function savePhotos(id,arr){
+  if(_db){
+    for(let i=0;i<3;i++){if(arr[i])await idbPut(`${id}-${i}`,arr[i]);else await idbDel(`${id}-${i}`);}
+  }
+  // IndexedDB未使用時は写真をrecordに持たせてlocalStorageへ（フォールバック）
+}
 async function loadPhotos(id){return Promise.all([0,1,2].map(i=>idbGet(`${id}-${i}`)));}
 async function deletePhotos(id){await Promise.all([0,1,2].map(i=>idbDel(`${id}-${i}`)));}
 
@@ -528,15 +559,22 @@ async function saveRecord(){
     photos:[...photos]
   };
 
-  // 写真をIndexedDBに保存
-  try{await savePhotos(id,rec.photos);}
-  catch(e){toast('⚠️ 写真の保存に失敗しました');btn.disabled=false;btn.textContent='記録を保存する';return;}
+  // 写真をIndexedDBに保存（失敗してもフォールバックで続行）
+  try{await savePhotos(id,rec.photos);}catch(e){console.warn('IDB save failed',e);}
 
   // メタデータをlocalStorageに保存
+  // IndexedDBが使えない場合は写真ごとlocalStorageに保存を試みる
   if(editId){const idx=records.findIndex(r=>r.id===editId);if(idx>=0)records[idx]=rec;}
   else records.push(rec);
-  try{saveMeta();}
-  catch(e){toast('⚠️ データの保存に失敗しました');btn.disabled=false;btn.textContent='記録を保存する';return;}
+  try{
+    if(_db) saveMeta(); // IndexedDB使用時は写真なしで保存
+    else localStorage.setItem(KEY,JSON.stringify(records)); // フォールバック：写真込み
+  }catch(e){
+    records=records.filter(r=>r.id!==id);
+    if(!editId){}else{/* rollback省略 */}
+    toast('⚠️ 保存に失敗しました。写真を減らすか、不要な記録を削除してください。');
+    btn.disabled=false;btn.textContent='記録を保存する';return;
+  }
 
   const isNew=!editId;
   const savedNo=fmtNo(rec.no);
