@@ -424,14 +424,14 @@ document.getElementById('crop-cancel').onclick=()=>{
 document.getElementById('crop-ok').onclick=()=>{
   // 元画像から正しくクロップして600x600で出力
   const out=document.createElement('canvas');
-  out.width=600;out.height=600;
+  out.width=480;out.height=480;
   const ctx=out.getContext('2d');
   const sx=-cropX/cropScale;
   const sy=-cropY/cropScale;
   const sw=cropSize/cropScale;
   const sh=cropSize/cropScale;
-  ctx.drawImage(cropImg,sx,sy,sw,sh,0,0,600,600);
-  photos[activeSlot]=out.toDataURL('image/jpeg',0.85);
+  ctx.drawImage(cropImg,sx,sy,sw,sh,0,0,480,480);
+  photos[activeSlot]=out.toDataURL('image/jpeg',0.72);
   renderSlot(activeSlot);
   document.getElementById('crop-modal').classList.remove('open');
 };
@@ -478,9 +478,19 @@ function saveRecord(){
     tags:document.getElementById('f-tags').value.split(',').map(t=>t.trim()).filter(Boolean),
     photos:[...photos]
   };
+  const prevRecords=[...records];
   if(editId){const idx=records.findIndex(r=>r.id===editId);if(idx>=0)records[idx]=rec;}
   else records.push(rec);
-  localStorage.setItem(KEY,JSON.stringify(records));
+
+  try{
+    localStorage.setItem(KEY,JSON.stringify(records));
+  }catch(e){
+    // 保存失敗 → メモリも元に戻す
+    records=prevRecords;
+    toast('⚠️ 写真が多すぎて保存できません。写真を減らしてお試しください。');
+    return;
+  }
+
   const isNew=!editId;
   const savedNo=fmtNo(rec.no);
   editId=null;
