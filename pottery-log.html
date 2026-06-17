@@ -122,17 +122,18 @@ nav{display:flex;gap:3px;background:var(--surface);border:1px solid var(--border
 .pc-cancel{padding:12px;font-size:14px;font-family:inherit;border:none;border-radius:var(--rs);background:var(--bg);color:var(--sub);cursor:pointer}
 
 /* Crop modal */
-.crop-bg{display:none;position:fixed;inset:0;background:#000;z-index:400;flex-direction:column}
+.crop-bg{display:none;position:fixed;top:0;left:0;right:0;bottom:0;background:#111;z-index:400;flex-direction:column;-webkit-overflow-scrolling:touch}
 .crop-bg.open{display:flex}
-.crop-header{display:flex;align-items:center;justify-content:space-between;padding:12px 16px;background:#111;color:#fff}
-.crop-header span{font-size:15px;font-weight:600}
-.crop-header button{padding:7px 16px;border:none;border-radius:20px;font-size:13px;cursor:pointer}
-.crop-cancel-btn{background:rgba(255,255,255,.15);color:#fff}
+.crop-header{flex-shrink:0;display:flex;align-items:center;justify-content:space-between;padding:12px 16px;padding-top:max(12px,env(safe-area-inset-top));background:#111;color:#fff;position:relative;z-index:1}
+.crop-header span{font-size:15px;font-weight:600;color:#fff}
+.crop-header button{padding:8px 18px;border:none;border-radius:20px;font-size:14px;cursor:pointer;font-family:inherit}
+.crop-cancel-btn{background:rgba(255,255,255,.18);color:#fff}
 .crop-ok-btn{background:var(--accent);color:#fff}
-.crop-stage{flex:1;position:relative;overflow:hidden;display:flex;align-items:center;justify-content:center;touch-action:none}
-.crop-stage canvas{display:block;max-width:100%;max-height:100%}
-.crop-overlay{position:absolute;inset:0;pointer-events:none}
-.crop-hint{position:absolute;bottom:14px;left:50%;transform:translateX(-50%);color:rgba(255,255,255,.6);font-size:12px;white-space:nowrap}
+.crop-stage{flex:1;position:relative;overflow:hidden;touch-action:none;-webkit-user-select:none;user-select:none}
+#crop-img{position:absolute;display:block;transform-origin:0 0;will-change:transform;pointer-events:none;-webkit-user-drag:none;max-width:none;max-height:none}
+.crop-shade{position:absolute;background:rgba(0,0,0,.55);pointer-events:none}
+.crop-frame-border{position:absolute;border:2px solid rgba(255,255,255,.8);box-shadow:0 0 0 9999px rgba(0,0,0,.55);pointer-events:none}
+.crop-footer{flex-shrink:0;text-align:center;color:rgba(255,255,255,.45);font-size:12px;padding:10px;padding-bottom:max(10px,env(safe-area-inset-bottom))}
 </style>
 </head>
 <body>
@@ -271,9 +272,10 @@ nav{display:flex;gap:3px;background:var(--surface);border:1px solid var(--border
     <button class="crop-ok-btn" id="crop-ok">使う</button>
   </div>
   <div class="crop-stage" id="crop-stage">
-    <canvas id="crop-canvas"></canvas>
-    <div class="crop-hint">ドラッグで位置調整・ピンチで拡大縮小</div>
+    <img id="crop-img" alt="" draggable="false">
+    <div class="crop-frame-border" id="crop-frame"></div>
   </div>
+  <div class="crop-footer">ドラッグで移動・ピンチで拡大縮小</div>
 </div>
 
 <script>
@@ -420,75 +422,107 @@ document.getElementById('pc-album').onclick=()=>{
 document.getElementById('inp-camera').addEventListener('change',function(){if(this.files[0])startCrop(this.files[0]);});
 document.getElementById('inp-album').addEventListener('change',function(){if(this.files[0])startCrop(this.files[0]);});
 
-// --- Crop ---
+// --- Crop (img + CSS transform, iOS対応) ---
 let cropImg=null,cropX=0,cropY=0,cropScale=1,cropSize=0;
 let drag=false,dragStartX=0,dragStartY=0,dragImgX=0,dragImgY=0;
-let pinchDist=0,pinchScale=1;
+let pinchDist=0,pinchScale=1,pinchCx=0,pinchCy=0,pinchImgX=0,pinchImgY=0;
+
+function applyCropTransform(){
+  const el=document.getElementById('crop-img');
+  el.style.transform='translate('+cropX+'px,'+cropY+'px) scale('+cropScale+')';
+}
+
+function clampCrop(){
+  if(!cropImg)return;
+  const iw=cropImg.naturalWidth*cropScale,ih=cropImg.naturalHeight*cropScale;
+  const stageEl=document.getElementById('crop-stage');
+  const sw=stageEl.clientWidth,sh=stageEl.clientHeight;
+  const frameSize=Math.min(sw,sh);
+  const ox=(sw-frameSize)/2,oy=(sh-frameSize)/2;
+  if(iw>=frameSize){cropX=Math.min(ox,Math.max(ox+frameSize-iw,cropX));}
+  else{cropX=Math.max(ox,Math.min(ox+frameSize-iw,cropX));}
+  if(ih>=frameSize){cropY=Math.min(oy,Math.max(oy+frameSize-ih,cropY));}
+  else{cropY=Math.max(oy,Math.min(oy+frameSize-ih,cropY));}
+}
 
 function startCrop(file){
   const url=URL.createObjectURL(file);
   const img=new Image();
   img.onload=()=>{
-    cropImg=img;
     URL.revokeObjectURL(url);
-    // モーダルを先に開いてからサイズ取得
+    cropImg=img;
     document.getElementById('crop-modal').classList.add('open');
     requestAnimationFrame(()=>{
       const stage=document.getElementById('crop-stage');
       const sw=stage.clientWidth||window.innerWidth;
-      const sh=stage.clientHeight||(window.innerHeight-56);
-      cropSize=Math.min(sw,sh);
-      const c=document.getElementById('crop-canvas');
-      c.width=cropSize;c.height=cropSize;
-      c.style.width=cropSize+'px';c.style.height=cropSize+'px';
-      // 画像がcanvasを埋めるよう初期スケール設定
-      cropScale=Math.max(cropSize/img.width,cropSize/img.height);
-      cropX=(cropSize-img.width*cropScale)/2;
-      cropY=(cropSize-img.height*cropScale)/2;
-      drawCrop();
+      const sh=stage.clientHeight||(window.innerHeight-120);
+      const frameSize=Math.min(sw,sh);
+      cropSize=frameSize;
+      cropScale=Math.max(frameSize/img.naturalWidth,frameSize/img.naturalHeight);
+      cropX=(sw-img.naturalWidth*cropScale)/2;
+      cropY=(sh-img.naturalHeight*cropScale)/2;
+      const el=document.getElementById('crop-img');
+      el.src=img.src;
+      el.style.width=img.naturalWidth+'px';
+      el.style.height=img.naturalHeight+'px';
+      el.style.transformOrigin='0 0';
+      // フレームを中央に配置
+      const frame=document.getElementById('crop-frame');
+      frame.style.left=(sw-frameSize)/2+'px';
+      frame.style.top=(sh-frameSize)/2+'px';
+      frame.style.width=frameSize+'px';
+      frame.style.height=frameSize+'px';
+      applyCropTransform();
     });
   };
   img.src=url;
 }
 
-function drawCrop(){
-  const c=document.getElementById('crop-canvas');
-  if(!c||!cropImg||cropSize===0)return;
-  const ctx=c.getContext('2d');
-  ctx.clearRect(0,0,cropSize,cropSize);
-  ctx.drawImage(cropImg,cropX,cropY,cropImg.width*cropScale,cropImg.height*cropScale);
-  // 枠線
-  ctx.strokeStyle='rgba(255,255,255,0.7)';
-  ctx.lineWidth=2;
-  ctx.strokeRect(1,1,cropSize-2,cropSize-2);
-}
-
-function clampCrop(){
-  const iw=cropImg.width*cropScale,ih=cropImg.height*cropScale;
-  cropX=iw>=cropSize?Math.min(0,Math.max(cropSize-iw,cropX)):Math.max(0,Math.min(cropSize-iw,cropX));
-  cropY=ih>=cropSize?Math.min(0,Math.max(cropSize-ih,cropY)):Math.max(0,Math.min(cropSize-ih,cropY));
-}
-
 // ドラッグ・ピンチ操作
 const cs=document.getElementById('crop-stage');
-cs.addEventListener('mousedown',e=>{drag=true;dragStartX=e.clientX;dragStartY=e.clientY;dragImgX=cropX;dragImgY=cropY;});
-cs.addEventListener('mousemove',e=>{if(!drag)return;cropX=dragImgX+(e.clientX-dragStartX);cropY=dragImgY+(e.clientY-dragStartY);clampCrop();drawCrop();});
+cs.addEventListener('mousedown',e=>{
+  e.preventDefault();
+  drag=true;dragStartX=e.clientX;dragStartY=e.clientY;dragImgX=cropX;dragImgY=cropY;
+});
+cs.addEventListener('mousemove',e=>{
+  if(!drag)return;
+  cropX=dragImgX+(e.clientX-dragStartX);
+  cropY=dragImgY+(e.clientY-dragStartY);
+  clampCrop();applyCropTransform();
+});
 window.addEventListener('mouseup',()=>drag=false);
+
 cs.addEventListener('touchstart',e=>{
-  if(e.touches.length===1){drag=true;dragStartX=e.touches[0].clientX;dragStartY=e.touches[0].clientY;dragImgX=cropX;dragImgY=cropY;}
-  else if(e.touches.length===2){drag=false;pinchDist=Math.hypot(e.touches[0].clientX-e.touches[1].clientX,e.touches[0].clientY-e.touches[1].clientY);pinchScale=cropScale;}
+  if(e.touches.length===1){
+    drag=true;
+    dragStartX=e.touches[0].clientX;dragStartY=e.touches[0].clientY;
+    dragImgX=cropX;dragImgY=cropY;
+  } else if(e.touches.length===2){
+    drag=false;
+    pinchDist=Math.hypot(e.touches[0].clientX-e.touches[1].clientX,e.touches[0].clientY-e.touches[1].clientY);
+    pinchScale=cropScale;
+    pinchCx=(e.touches[0].clientX+e.touches[1].clientX)/2;
+    pinchCy=(e.touches[0].clientY+e.touches[1].clientY)/2;
+    pinchImgX=cropX;pinchImgY=cropY;
+  }
 },{passive:true});
+
 cs.addEventListener('touchmove',e=>{
   e.preventDefault();
   if(e.touches.length===1&&drag){
     cropX=dragImgX+(e.touches[0].clientX-dragStartX);
     cropY=dragImgY+(e.touches[0].clientY-dragStartY);
-    clampCrop();drawCrop();
+    clampCrop();applyCropTransform();
   } else if(e.touches.length===2){
     const d=Math.hypot(e.touches[0].clientX-e.touches[1].clientX,e.touches[0].clientY-e.touches[1].clientY);
-    const minScale=cropSize/Math.max(cropImg.width,cropImg.height)*0.5;
-    cropScale=Math.max(minScale,Math.min(pinchScale*(d/pinchDist),6));
-    clampCrop();drawCrop();
+    const stage=document.getElementById('crop-stage');
+    const minScale=cropSize/Math.max(cropImg.naturalWidth,cropImg.naturalHeight)*0.5;
+    const newScale=Math.max(minScale,Math.min(pinchScale*(d/pinchDist),8));
+    const ratio=newScale/pinchScale;
+    cropX=pinchCx-(pinchCx-pinchImgX)*ratio;
+    cropY=pinchCy-(pinchCy-pinchImgY)*ratio;
+    cropScale=newScale;
+    clampCrop();applyCropTransform();
   }
 },{passive:false});
 cs.addEventListener('touchend',e=>{if(e.touches.length===0)drag=false;});
@@ -497,15 +531,17 @@ document.getElementById('crop-cancel').onclick=()=>{
   document.getElementById('crop-modal').classList.remove('open');
 };
 document.getElementById('crop-ok').onclick=()=>{
-  // 元画像から正しくクロップして600x600で出力
+  const stage=document.getElementById('crop-stage');
+  const sw=stage.clientWidth,sh=stage.clientHeight;
+  const frameSize=Math.min(sw,sh);
+  const ox=(sw-frameSize)/2,oy=(sh-frameSize)/2;
   const out=document.createElement('canvas');
   out.width=480;out.height=480;
   const ctx=out.getContext('2d');
-  const sx=-cropX/cropScale;
-  const sy=-cropY/cropScale;
-  const sw=cropSize/cropScale;
-  const sh=cropSize/cropScale;
-  ctx.drawImage(cropImg,sx,sy,sw,sh,0,0,480,480);
+  const sx=(ox-cropX)/cropScale;
+  const sy=(oy-cropY)/cropScale;
+  const ss=frameSize/cropScale;
+  ctx.drawImage(cropImg,sx,sy,ss,ss,0,0,480,480);
   photos[activeSlot]=out.toDataURL('image/jpeg',0.72);
   renderSlot(activeSlot);
   document.getElementById('crop-modal').classList.remove('open');
