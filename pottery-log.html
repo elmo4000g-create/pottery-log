@@ -450,36 +450,38 @@ function clampCrop(){
 }
 
 function startCrop(file){
-  const url=URL.createObjectURL(file);
-  const img=new Image();
-  img.onload=()=>{
-    URL.revokeObjectURL(url);
-    cropImg=img;
-    document.getElementById('crop-modal').classList.add('open');
-    requestAnimationFrame(()=>{
-      const stage=document.getElementById('crop-stage');
-      const sw=stage.clientWidth||window.innerWidth;
-      const sh=stage.clientHeight||(window.innerHeight-120);
-      const frameSize=Math.min(sw,sh);
-      cropSize=frameSize;
-      cropScale=Math.max(frameSize/img.naturalWidth,frameSize/img.naturalHeight);
-      cropX=(sw-img.naturalWidth*cropScale)/2;
-      cropY=(sh-img.naturalHeight*cropScale)/2;
-      const el=document.getElementById('crop-img');
-      el.src=img.src;
-      el.style.width=img.naturalWidth+'px';
-      el.style.height=img.naturalHeight+'px';
-      el.style.transformOrigin='0 0';
-      // フレームを中央に配置
-      const frame=document.getElementById('crop-frame');
-      frame.style.left=(sw-frameSize)/2+'px';
-      frame.style.top=(sh-frameSize)/2+'px';
-      frame.style.width=frameSize+'px';
-      frame.style.height=frameSize+'px';
-      applyCropTransform();
-    });
+  const reader=new FileReader();
+  reader.onload=(e)=>{
+    const dataUrl=e.target.result;
+    const img=new Image();
+    img.onload=()=>{
+      cropImg=img;
+      document.getElementById('crop-modal').classList.add('open');
+      requestAnimationFrame(()=>{
+        const stage=document.getElementById('crop-stage');
+        const sw=stage.clientWidth||window.innerWidth;
+        const sh=stage.clientHeight||(window.innerHeight-120);
+        const frameSize=Math.min(sw,sh);
+        cropSize=frameSize;
+        cropScale=Math.max(frameSize/img.naturalWidth,frameSize/img.naturalHeight);
+        cropX=(sw-img.naturalWidth*cropScale)/2;
+        cropY=(sh-img.naturalHeight*cropScale)/2;
+        const el=document.getElementById('crop-img');
+        el.src=dataUrl;
+        el.style.width=img.naturalWidth+'px';
+        el.style.height=img.naturalHeight+'px';
+        el.style.transformOrigin='0 0';
+        const frame=document.getElementById('crop-frame');
+        frame.style.left=(sw-frameSize)/2+'px';
+        frame.style.top=(sh-frameSize)/2+'px';
+        frame.style.width=frameSize+'px';
+        frame.style.height=frameSize+'px';
+        applyCropTransform();
+      });
+    };
+    img.src=dataUrl;
   };
-  img.src=url;
+  reader.readAsDataURL(file);
 }
 
 // ドラッグ・ピンチ操作
