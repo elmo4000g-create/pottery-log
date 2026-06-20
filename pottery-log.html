@@ -23,6 +23,14 @@ body{font-family:'Noto Sans JP',sans-serif;background:var(--bg);color:var(--text
 header{display:flex;align-items:center;justify-content:space-between;padding:1rem 0 1.25rem;border-bottom:1px solid var(--border);margin-bottom:1.25rem}
 .logo{font-family:'Shippori Mincho',serif;font-size:22px;font-weight:700;display:flex;align-items:center;gap:8px;letter-spacing:.1em;color:var(--text)}
 .about-btn{background:none;border:1px solid var(--border);border-radius:50%;width:32px;height:32px;display:flex;align-items:center;justify-content:center;cursor:pointer;color:var(--sub);font-size:15px;font-weight:600;flex-shrink:0}
+/* Install banner */
+.install-banner{display:none;position:fixed;bottom:0;left:0;right:0;z-index:200;padding:0 12px 0;padding-bottom:env(safe-area-inset-bottom)}
+.install-banner.show{display:block}
+.install-inner{background:var(--surface);border:1px solid var(--border);border-radius:16px 16px 0 0;padding:16px 16px 20px;box-shadow:0 -4px 20px rgba(0,0,0,.1)}
+.install-title{font-size:14px;font-weight:700;color:var(--text);margin-bottom:6px}
+.install-steps{font-size:13px;color:var(--sub);line-height:2;margin-bottom:14px}
+.install-steps b{color:var(--text)}
+.install-dismiss{width:100%;padding:11px;background:var(--accent);color:#fff;border:none;border-radius:var(--rs);font-size:14px;font-weight:600;cursor:pointer;font-family:inherit}
 /* About modal */
 .about-bg{display:none;position:fixed;inset:0;background:rgba(0,0,0,.45);z-index:300;align-items:flex-end;justify-content:center}
 .about-bg.open{display:flex}
@@ -169,6 +177,19 @@ nav{display:flex;gap:3px;background:var(--surface);border:1px solid var(--border
     </div>
     <button class="about-btn" onclick="openAbout()" aria-label="このアプリについて">？</button>
   </header>
+
+  <!-- Install banner -->
+  <div class="install-banner" id="install-banner">
+    <div class="install-inner">
+      <div class="install-title">📲 ホーム画面に追加するともっと便利！</div>
+      <div class="install-steps">
+        ① 画面下の <b>共有ボタン（□↑）</b> をタップ<br>
+        ② <b>「ホーム画面に追加」</b> を選ぶ<br>
+        ③ アプリとして使えるようになります
+      </div>
+      <button class="install-dismiss" onclick="dismissInstall()">わかりました</button>
+    </div>
+  </div>
 
   <!-- About modal -->
   <div class="about-bg" id="about-modal" onclick="if(event.target===this)closeAbout()">
@@ -752,6 +773,23 @@ async function deleteRecord(){
 }
 
 load();
+showInstallBanner();
+
+// --- Install banner ---
+function showInstallBanner(){
+  // iOSSafariのみ・スタンドアロン（ホーム画面から起動）は除外・一度閉じたら出さない
+  const isIOS=/iphone|ipad|ipod/i.test(navigator.userAgent);
+  const isSafari=/safari/i.test(navigator.userAgent)&&!/chrome|crios|fxios|line/i.test(navigator.userAgent);
+  const isStandalone=window.navigator.standalone===true;
+  const dismissed=localStorage.getItem('install-dismissed');
+  if(isIOS&&isSafari&&!isStandalone&&!dismissed){
+    setTimeout(()=>document.getElementById('install-banner').classList.add('show'),1500);
+  }
+}
+function dismissInstall(){
+  document.getElementById('install-banner').classList.remove('show');
+  localStorage.setItem('install-dismissed','1');
+}
 
 // --- About ---
 function openAbout(){
